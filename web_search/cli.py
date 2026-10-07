@@ -1,6 +1,7 @@
 """Command-line interface entry point for web-search."""
 
 import argparse
+import math
 import sys
 from typing import List, Optional
 import webbrowser
@@ -92,6 +93,7 @@ def read_result_article(result: SearchResult) -> None:
             markdown = fetch_page_content(result.url)
         except Exception as exc:
             print_error(f"Could not read webpage: {exc}")
+            console.input("\n[dim]Press Enter to return to results...[/dim]")
             return
 
     display_article(
@@ -103,21 +105,27 @@ def read_result_article(result: SearchResult) -> None:
 
 def interactive_session(
     initial_results: Optional[List[SearchResult]] = None,
+    initial_query: str = "",
     max_results: int = 10,
+    page_size: int = 5,
 ) -> None:
     """Run the interactive search and navigation REPL loop.
 
     Args:
         initial_results: Pre-fetched search results from CLI query if any.
+        initial_query: The search query string for the initial results.
         max_results: Default count of search results to fetch per query.
+        page_size: Number of results displayed per page.
     """
     current_results = initial_results or []
+    current_query = initial_query
+    current_page = 1
 
     while True:
         try:
             prompt_str = (
                 "\n[bold cyan]web-search[/bold cyan] "
-                "[dim](topic, #, :b #, :h, :q)[/dim] > "
+                "[dim](topic, #, n, p, :b #, :h, :q)[/dim] > "
             )
             user_input = console.input(prompt_str).strip()
         except (KeyboardInterrupt, EOFError):
@@ -137,6 +145,54 @@ def interactive_session(
         # Handle help commands
         if lowered in (":h", ":help"):
             display_help()
+            continue
+
+        # Handle next page navigation
+        if lowered in ("n", "next"):
+            if not current_results:
+                print_warning("No active search results. Enter a topic first.")
+                continue
+            total_pages = max(1, math.ceil(len(current_results) / page_size))
+            if current_page < total_pages:
+                current_page += 1
+                display_results(
+                    current_results,
+                    current_query,
+                    page=current_page,
+                    page_size=page_size,
+                )
+            else:
+                print_warning("You are already on the last page of results.")
+            continue
+
+        # Handle previous page navigation
+        if lowered in ("p", "prev", "previous"):
+            if not current_results:
+                print_warning("No active search results. Enter a topic first.")
+                continue
+            if current_page > 1:
+                current_page -= 1
+                display_results(
+                    current_results,
+                    current_query,
+                    page=current_page,
+                    page_size=page_size,
+                )
+            else:
+                print_warning("You are already on the first page of results.")
+            continue
+
+        # Handle redisplay of current results
+        if lowered in ("r", "results"):
+            if current_results:
+                display_results(
+                    current_results,
+                    current_query,
+                    page=current_page,
+                    page_size=page_size,
+                )
+            else:
+                print_warning("No active search results to display.")
             continue
 
         # Handle opening link in external browser: :b <number>
@@ -169,6 +225,14 @@ def interactive_session(
             )
             if matched:
                 read_result_article(matched)
+                # Redisplay search results cleanly after reading
+                if current_results:
+                    display_results(
+                        current_results,
+                        current_query,
+                        page=current_page,
+                        page_size=page_size,
+                    )
             else:
                 max_idx = len(current_results)
                 print_warning(
@@ -179,17 +243,27 @@ def interactive_session(
 
         # Treat any other text as a new search query
         query = user_input
-        with console.status(
-            f"[cyan]Searching for '{query}'...[/cyan]", spinner="dots"
-        ):
-            try:
+        try:
+            with console.status(
+                f"[cyan]Searching for '{query}'...[/cyan]", spinner="dots"
+            ):
                 results = search_web(query, max_results=max_results)
-            except Exception as exc:
-                print_error(f"Search failed: {exc}")
-                continue
+        except KeyboardInterrupt:
+            console.print("\n[dim]Search cancelled.[/dim]")
+            continue
+        except Exception as exc:
+            print_error(f"Search failed: {exc}")
+            continue
 
         current_results = results
-        display_results(current_results, query)
+        current_query = query
+        current_page = 1
+        display_results(
+            current_results,
+            current_query,
+            page=current_page,
+            page_size=page_size,
+        )
 
 
 def main(args: Optional[List[str]] = None) -> int:
@@ -222,11 +296,14 @@ def main(args: Optional[List[str]] = None) -> int:
                 print_error(f"Search failed: {exc}")
                 return 1
 
-        display_results(results, full_query)
+        display_results(results, full_query, page=1, page_size=5)
 
         if not parsed_args.one_shot:
             interactive_session(
-                initial_results=results, max_results=parsed_args.num
+                initial_results=results,
+                initial_query=full_query,
+                max_results=parsed_args.num,
+                page_size=5,
             )
     except KeyboardInterrupt:
         console.print("\n[dim]Search cancelled. Exiting.[/dim]")

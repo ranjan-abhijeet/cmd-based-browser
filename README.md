@@ -106,8 +106,11 @@ web-search
 While viewing results or in an interactive session:
 | Command | Action |
 |---|---|
-| `<topic>` | Search for a new topic directly (e.g. `fastapi tutorial`) |
-| `<number>` | Read that result's full article cleanly formatted in terminal |
+| `<topic>` | Search for a new topic directly (clears screen & starts at row 1) |
+| `<number>` | Read that article paged from top to bottom in terminal |
+| `n` or `next` | View next page of search results (next 5) |
+| `p` or `prev` | View previous page of search results (prev 5) |
+| `r` or `results` | Re-display current search results page |
 | `:b <number>` | Open that result URL in your default desktop web browser |
 | `:h` or `:help` | View help and controls menu |
 | `:q` or `exit` | Exit the CLI |

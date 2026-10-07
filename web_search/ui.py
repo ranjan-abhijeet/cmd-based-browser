@@ -1,6 +1,7 @@
 """Rich terminal UI presentation components for web-search CLI."""
 
-from typing import List, Optional
+import math
+from typing import List
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -31,13 +32,25 @@ def display_banner() -> None:
     )
 
 
-def display_results(results: List[SearchResult], query: str) -> None:
-    """Render a list of search results in a clean formatted view.
+def display_results(
+    results: List[SearchResult],
+    query: str,
+    page: int = 1,
+    page_size: int = 5,
+    clear_screen: bool = True,
+) -> None:
+    """Render a page of search results wrapped cleanly to the terminal width.
 
     Args:
         results: List of SearchResult objects to display.
         query: The search query string for context.
+        page: Current page number (1-indexed).
+        page_size: Number of results to display per page.
+        clear_screen: Whether to clear terminal screen before displaying.
     """
+    if clear_screen:
+        console.clear()
+
     if not results:
         no_res_msg = (
             f"[yellow]No results found for '[bold]{query}[/bold]'.[/yellow]"
@@ -50,18 +63,54 @@ def display_results(results: List[SearchResult], query: str) -> None:
         )
         return
 
+    total_results = len(results)
+    total_pages = max(1, math.ceil(total_results / page_size))
+    current_page = max(1, min(page, total_pages))
+
+    start_idx = (current_page - 1) * page_size
+    end_idx = min(start_idx + page_size, total_results)
+    page_items = results[start_idx:end_idx]
+
+    # Clean top header with query and page progress
+    header = Text()
+    header.append("🔍 Search: ", style="bold cyan")
+    header.append(f'"{query}"', style="bold white")
+    header.append(
+        f"  │  Page {current_page} of {total_pages} ",
+        style="dim cyan",
+    )
+    header.append(
+        f"({start_idx + 1}-{end_idx} of {total_results})",
+        style="dim",
+    )
+
+    console.print(
+        Panel(
+            header,
+            border_style="cyan",
+            expand=True,
+            padding=(0, 1),
+        )
+    )
+
+    # Responsive table wrapped to terminal width
     table = Table(
-        title=f"Search Results for: [bold cyan]\"{query}\"[/bold cyan]",
-        title_justify="left",
+        expand=True,
         show_header=False,
         box=None,
         padding=(0, 1),
     )
-    table.add_column("Index", style="bold yellow", width=4, justify="right")
-    table.add_column("Details", style="white")
+    table.add_column("Index", style="bold yellow", width=5, justify="right")
+    table.add_column(
+        "Content",
+        style="white",
+        ratio=1,
+        no_wrap=False,
+        overflow="fold",
+    )
 
-    for res in results:
-        details = Text()
+    for res in page_items:
+        details = Text(no_wrap=False, overflow="fold")
         details.append(f"{res.title}\n", style="bold bright_blue")
         details.append(f"{res.url}\n", style="green dim")
         if res.snippet:
@@ -70,29 +119,48 @@ def display_results(results: List[SearchResult], query: str) -> None:
         table.add_row(f"[{res.index}]", details)
         table.add_section()
 
-    console.print()
     console.print(table)
-    console.print(
-        "[dim]Actions: Enter [[bold yellow]#item[/bold yellow]] to read in "
-        "terminal | [[bold yellow]:b #[/bold yellow]] open in browser | "
-        "[[bold yellow]:q[/bold yellow]] exit[/dim]\n"
-    )
+
+    # Action navigation toolbar
+    actions = Text()
+    actions.append("Actions: ", style="bold dim")
+    actions.append("[#item] ", style="bold yellow")
+    actions.append("Read article  ", style="dim")
+    if total_pages > 1:
+        if current_page < total_pages:
+            actions.append("[n] ", style="bold yellow")
+            actions.append("Next 5  ", style="dim")
+        if current_page > 1:
+            actions.append("[p] ", style="bold yellow")
+            actions.append("Prev 5  ", style="dim")
+    actions.append("[:b #] ", style="bold yellow")
+    actions.append("Browser  ", style="dim")
+    actions.append("[:q] ", style="bold yellow")
+    actions.append("Exit", style="dim")
+
+    console.print(actions)
+    console.print()
 
 
 def display_article(
     title: str,
     url: str,
     markdown_content: str,
-    max_lines: Optional[int] = None,
+    chunk_size: int = 25,
+    clear_screen: bool = True,
 ) -> None:
-    """Display article content rendered from Markdown in the terminal.
+    """Display article content paged from top to bottom.
 
     Args:
         title: Title of the article or search result.
         url: Original webpage URL.
         markdown_content: Clean markdown text of the webpage.
-        max_lines: Optional maximum lines to display before truncation.
+        chunk_size: Number of lines to display per screen page.
+        clear_screen: Whether to clear screen for each page.
     """
+    if clear_screen:
+        console.clear()
+
     console.rule(f"[bold cyan]{title}[/bold cyan]")
     console.print(f"[dim green]Source: {url}[/dim green]\n")
 
@@ -101,22 +169,53 @@ def display_article(
             "[italic yellow]No readable text could be extracted "
             "from this page.[/italic yellow]"
         )
+        console.input("\n[dim]Press Enter to return to results...[/dim]")
         return
 
     lines = markdown_content.splitlines()
-    if max_lines and len(lines) > max_lines:
-        truncated_content = "\n".join(lines[:max_lines])
-        truncated_content += (
-            f"\n\n*[Content truncated. Showing first {max_lines} "
-            f"lines of {len(lines)}...]*"
-        )
-        md = Markdown(truncated_content)
-    else:
-        md = Markdown(markdown_content)
+    total_lines = len(lines)
 
-    console.print(md)
-    console.rule("[bold cyan]End of Article[/bold cyan]")
-    console.print()
+    if total_lines <= chunk_size:
+        console.print(Markdown(markdown_content))
+        console.rule("[bold cyan]End of Article[/bold cyan]")
+        console.input("\n[dim]Press Enter to return to results...[/dim]")
+        return
+
+    # Multi-page article reading
+    chunks = [
+        lines[i:i + chunk_size] for i in range(0, total_lines, chunk_size)
+    ]
+    total_chunks = len(chunks)
+
+    for idx, chunk in enumerate(chunks, start=1):
+        if clear_screen and idx > 1:
+            console.clear()
+            page_info = f"[dim](Page {idx}/{total_chunks})[/dim]"
+            console.rule(f"[bold cyan]{title}[/bold cyan] {page_info}")
+            console.print(f"[dim green]Source: {url}[/dim green]\n")
+
+        chunk_text = "\n".join(chunk)
+        console.print(Markdown(chunk_text))
+
+        if idx < total_chunks:
+            prompt_text = (
+                f"\n[dim]-- Page {idx}/{total_chunks}: "
+                "Press Enter for next page, or type 'q' to return --[/dim] "
+            )
+            try:
+                user_choice = console.input(prompt_text).strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                break
+            if user_choice in ("q", "quit", "exit"):
+                break
+        else:
+            console.rule("[bold cyan]End of Article[/bold cyan]")
+            try:
+                console.input(
+                    "\n[dim]Press Enter to return to results...[/dim]"
+                )
+            except (KeyboardInterrupt, EOFError):
+                pass
 
 
 def display_help() -> None:
@@ -127,8 +226,14 @@ def display_help() -> None:
     help_text.append("Search for a new topic directly\n", style="white")
     help_text.append("  <number>       ", style="bold yellow")
     help_text.append(
-        "Read result # text directly in the terminal\n", style="white"
+        "Read result # text cleanly from top to bottom\n", style="white"
     )
+    help_text.append("  n, next        ", style="bold yellow")
+    help_text.append("View next 5 search results\n", style="white")
+    help_text.append("  p, prev        ", style="bold yellow")
+    help_text.append("View previous 5 search results\n", style="white")
+    help_text.append("  r, results     ", style="bold yellow")
+    help_text.append("Re-display current search results\n", style="white")
     help_text.append("  :b <number>    ", style="bold yellow")
     help_text.append(
         "Open result # in your default web browser\n", style="white"
